@@ -1,0 +1,11 @@
+<template>
+    <!-- Custom Approach -->
+    <lightning-card title="Account Form" class="slds-p-around_medium">
+        <lightning-input type="text" class="slds-p-around_small" label="Account Name" name="accountName" onchange={handleInputChange}></lightning-input>
+        <lightning-input type="text" class="slds-p-around_small" label="Annual Revenue" name="annualRevenue" onchange={handleInputChange}></lightning-input>
+        <lightning-button class="slds-p-around_small" label="Create Account" variant="brand" onclick={handleCreateAccount}></lightning-button>
+    </lightning-card>
+
+    <!-- Dynamic Approach -->
+    <lightning-record-form object-api-name={objectApiName} fields={fields}></lightning-record-form>
+</template>
