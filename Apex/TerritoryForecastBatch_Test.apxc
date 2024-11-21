@@ -1,0 +1,61 @@
+@isTest
+public class TerritoryForecastBatch_Test {
+    @isTest public static void testCase1() {
+        Test.startTest();
+        Profile p = [SELECT Id FROM Profile WHERE Name='Genpact Super Admin']; 
+        Business_Segments__c oBS = GEN_Util_Test_Data.CreateBusiness_Segments('Test','GE');
+        Archetype__c oAT=GEN_Util_Test_Data.CreateArchetype('test');
+        User u3 =GEN_Util_Test_Data.CreateUser('standarduser2077@testorg.com',p.Id,'standardusertestgen2077@testorg.com' );
+        Sales_Unit__c salesunit = new Sales_Unit__c(Name='Sales Unit 1',Sales_Leader__c = u3.id);
+        insert salesunit;
+        Account acc= new Account(Name='Testrersdfr',GA_Contact__c=u3.Id,Is_This_A_Partner_Account__c='Yes',Sales_Unit__c=salesunit.Id,Client_Partner__c=Userinfo.getUserId(),
+                                      ownerid=u3.Id,Archetype__c=oAT.Id,Business_group__c='GE',business_segment__c=oBS.Id,
+                                      industry_vertical__c='Manufacturing',sub_industry_vertical__c='Aerospace & Defense',AccountNumber='32324');
+        insert acc;
+        //creating contact
+        Contact con = GEN_Util_Test_Data.CreateContact('abc','xyz',acc.Id,'test','Cross-Sell',
+                                                            'test121@xyz.com','99999999999');
+        Id RecordTypeId = Schema.SObjectType.Opportunity.getRecordTypeInfosByName().get('Discover Opportunity').getRecordTypeId(); 
+        
+        // creating ForecastingQuota 
+        Territory2Model tm = [SELECT Id, Name, DeveloperName FROM Territory2Model LIMIT 1];
+        
+        Territory2Type tt = [SELECT id, DeveloperName FROM Territory2Type LIMIT 1];
+        
+        Territory2 trr = [SELECT Id, Name, ParentTerritory2Id, DeveloperName,ForecastUserId 
+                          FROM Territory2 
+                          WHERE Territory2ModelId =: tm.Id 
+                          	AND Territory2TypeId =:tt.Id 
+                          	AND ForecastUserId != null 
+                          	AND ParentTerritory2Id != null 
+                          LIMIT 1];
+        
+        ForecastingType ft = [select id from ForecastingType where IsActive=true limit 1];
+
+        //creating opportunity
+        List<Opportunity> oppList=new List<Opportunity>();
+        Opportunity opp=new opportunity(name='1234',StageName='1. Discover',Nature_of_Work_highest__c = 'Consulting', 
+                                        CloseDate=system.today()+1, recordTypeId = RecordTypeId,
+                                        Revenue_Start_Date__c=system.today()+1,accountid=acc.id,W_L_D__c='', Insight__c = 30,
+                                        Competitor__c='Accenture',Opportunity_Source__c ='Market Maker',
+                                        contact1__c = con.ID, role__c = 'Other', Amount = 1000000, Territory2Id = trr.Id,
+                                        Predicted_Win_Probability__c= 10, Forecast_Category1__c= 'Likely');
+        
+        oppList.add(opp);
+        
+        insert oppList;
+        
+        FOrecastingCustomData fc = new ForecastingCustomData();
+        fc.Territory2Id = trr.Id;
+        fc.StartDate = System.today()+1;
+        fc.Einstein_Prediction_Score__c = oppList[0].Predicted_Win_TCV__c;
+        fc.ForecastOwnerId = trr.ForecastUserId;
+        fc.ForecastingTypeId = ft.Id;
+        insert fc;
+
+        TerritoryForecastBatch batch = new TerritoryForecastBatch();
+        Database.executeBatch(batch, 10);
+        TerritoryForecastBatch.scheduleBatch();
+        Test.stopTest();
+    }
+}
