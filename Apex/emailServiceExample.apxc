@@ -1,0 +1,217 @@
+/* Author: Ranjit Yadav
+TestClass: EmailServiceForEmailTempalteTest*/
+global class EmailServiceForEmailTempalte implements Messaging.InboundEmailHandler {
+    global Static String targetObjectId = '';
+
+    global Messaging.InboundEmailResult handleInboundEmail (Messaging.InboundEmail email, Messaging.InboundEnvelope envelope) {
+        Messaging.InboundEmailResult result = new Messaging.InboundEmailresult();
+        String completeEmailBody = email.plainTextBody;
+        String emailSubject = email.subject;
+        String emailFrom = email.fromAddress;
+        String qsrmNumber = emailSubject.substringAfter('(').substringBefore(')');
+        String emailStatus = emailSubject.substringBefore('(');
+        try{
+            System.debug('emailStatus :::: ' + emailStatus);
+            System.debug('Email :::: ' + email);
+            System.debug('Oppid :::: ' + qsrmNumber);
+            System.debug('emailFrom :::: ' + emailFrom);
+            System.debug('completeEmailBody :::: ' + completeEmailBody);
+            List<User> usrList = [Select Id, Name from user where email =: emailFrom And IsActive = true order by Lastmodifieddate desc  limit 1];
+            system.debug('---usrList---'+usrList);
+            
+            List<QSRM_Leadership_Approvals__c> qsrmApprovals = new List<QSRM_Leadership_Approvals__c>();
+            if(usrList.size() > 0){
+                qsrmApprovals = [select Id, One_QSRM_Type__c, QSRM_Type__c,  LCP_Approver_Status__c, Digital_Leader_Approver_Status__c,
+                                 LCP_Approver__r.Email,Vertical_Leader_Approver__r.Email,Digital_Leader_Approver__r.Email,
+                                 Vertical_Leader_Approver_Status__c,  Digital_Leader_Approver__r.Name , Vertical_Leader_Approver__r.Name,LCP_Approver__r.Name  
+                                 from QSRM_Leadership_Approvals__c where QSRM_Number__c =:qsrmNumber AND 
+                                 (LCP_Approver__c =: usrList[0].Id OR Digital_Leader_Approver__c =: usrList[0].Id OR Vertical_Leader_Approver__c =:usrList[0].Id)];
+            }
+            
+            List<ProcessInstanceWorkItem> approvalItemsLst = new List<ProcessInstanceWorkItem>();
+            system.debug('----'+qsrmApprovals[0] );
+            system.debug('----'+[SELECT Id,ProcessInstance.TargetObjectId,CreatedDate FROM ProcessInstanceWorkItem limit 1] );
+            if(qsrmApprovals.size() > 0){
+                approvalItemsLst = [SELECT Id,ProcessInstance.TargetObjectId, CreatedDate FROM ProcessInstanceWorkItem 
+                                    WHERE ProcessInstance.TargetObjectId =: qsrmApprovals[0].Id];
+            }
+           
+            if ((qsrmApprovals.size() > 0) && (emailStatus.containsIgnoreCase('Approved') || emailStatus.containsIgnoreCase('Reject') ||emailStatus.containsIgnoreCase('Rework'))) {
+                                                   System.debug('Inside First If :::: ' + emailStatus.containsIgnoreCase('Approved'));
+                                                   if(!qsrmApprovals.isEmpty()){
+                                                       for(QSRM_Leadership_Approvals__c eachApproval : qsrmApprovals){
+                                                           if(eachApproval.LCP_Approver__r.Email == emailFrom){
+                                                               eachApproval.LCP_Approver_Status__c = emailStatus;
+                                                           }else if(eachApproval.Digital_Leader_Approver__r.Email == emailFrom){
+                                                               eachApproval.Digital_Leader_Approver_Status__c = emailStatus;
+                                                           } else if(eachApproval.Vertical_Leader_Approver__r.Email == emailFrom){
+                                                               eachApproval.Vertical_Leader_Approver_Status__c = emailStatus;
+                                                           }
+                                                       }
+                                                   }
+                                                   system.debug('qsrmApprovals--'+qsrmApprovals);
+                                                  // update qsrmApprovals;
+                                                   system.debug('qsrmApprovals--'+qsrmApprovals);
+                                                   List<Id> approvalProccesId = new List<Id>();
+                                                   approvalProccesId.add(approvalItemsLst[0].Id);
+                                                   system.debug('approvalProccesId--'+approvalProccesId);
+                                                   
+                                                   string commentsData = '';
+                                                   string actionType = '';
+                                                   if(emailStatus.containsIgnoreCase('Approved')){
+                                                       actionType = 'Approve';
+                                                       //commentsData = 'Reworked';
+                                                   }else if(emailStatus.containsIgnoreCase('Reject')){
+                                                       actionType = 'Reject';
+                                                       commentsData = completeEmailBody;
+                                                   }else{
+                                                       actionType = 'Rework';
+                                                       commentsData = completeEmailBody;
+                                                       EmailServiceForEmailTempalte.TargetObjectId = approvalItemsLst[0].Id;
+                                                       System.debug('Email Service :::: ' + EmailServiceForEmailTempalte.TargetObjectId);
+                                                   }
+                                                   boolean returnValue = HomePageApprovalController.approvePendingItems(approvalProccesId, commentsData, actionType);
+                                                   
+                                                   system.debug('returnValue--'+returnValue);
+                                                   return null;
+                                               }else if((qsrmApprovals.size() > 0) && (emailStatus.containsIgnoreCase('Re-Assign Qsrm'))){
+                                                   
+                                                   Map<Id, String> approverIdVsNameMap = new Map<Id, String>();
+                                                   
+                                                   
+                                                   List<Reassign_QSRM_Approver__c> reassignQsrmApprList = new List<Reassign_QSRM_Approver__c>();
+                                                   reassignQsrmApprList = [SELECT Approver_Name__c, Approver_Name__r.Name, Is_Primary__c, Parent_Approver__c
+                                                                           FROM Reassign_QSRM_Approver__c WHERE Parent_Approver__c =: usrList[0].Id AND Is_Primary__c = true Limit 1];
+                                                   
+                                                   
+                                                   
+                                                   List<Id> approvalProccesId = new List<Id>();
+                                                   approvalProccesId.add(approvalItemsLst[0].Id);
+                                                   reassignApprovalProcess(reassignQsrmApprList[0].Approver_Name__c, approvalProccesId, usrList[0].Id);
+                                                   return null;
+                                               } else {
+                                                   return null;
+                                               }
+        } catch (Exception ex) {
+            System.debug('Email Service==error line ='+ex.getLineNumber()+':====:'+ex.getMessage());
+            CreateErrorLog.createErrorRecord('EmailServiceForEmailTempalte =:error msg',ex.getMessage(), qsrmNumber, ex.getStackTraceString(),'EmailServiceForEmailTempalte', 'handleInboundEmail','Fail','',String.valueOf(ex.getLineNumber()));
+            return null;
+        }
+    }
+
+
+     public static boolean reassignApprovalProcess(String userId, List<Id> approvalProcessId, String parentApprover) {
+        try {
+            System.debug('userId>>>>> ' + userId);
+            System.debug('approvalProcessId>>>>> ' + approvalProcessId);
+            if(!approvalProcessId.isEmpty()) {
+                Set<Id> targetObjectIdSet = new Set<Id>();
+                List<ProcessInstanceWorkItem> processWorkItemList = [SELECT Id,ProcessInstance.TargetObjectId,CreatedDate, ProcessInstance.Status, Actor.Name, ProcessInstance.ProcessDefinition.DeveloperName, ProcessInstance.ProcessDefinitionId FROM ProcessInstanceWorkItem WHERE Id IN: approvalProcessId];
+                for(ProcessInstanceWorkItem workItem : processWorkItemList) {
+                    targetObjectIdSet.add(workItem.ProcessInstance.TargetObjectId);
+                }
+                List<QSRM_Leadership_Approvals__c> qsrmLeaderShipList = [SELECT Id, Parent_QSRM_Leadership_Approval__r.LCP_Approver__c,Parent_QSRM_Leadership_Approval__r.Vertical_Leader_Approver__c,Parent_QSRM_Leadership_Approval__r.Digital_Leader_Approver__c, LCP_Approver__c,
+                                                                         LCP_Approver_Status__c, Vertical_Leader_Approver__c, Vertical_Leader_Approver_Status__c, Digital_Leader_Approver__c, Digital_Leader_Approver_Status__c, One_QSRM_Type__c, QSRM__c, QSRM__r.OppOwnerEmail__c FROM QSRM_Leadership_Approvals__c WHERE Id IN: targetObjectIdSet];
+                List<QSRM_Leadership_Approvals__c> qsrmLeaderShipList1 = [SELECT Id, Parent_QSRM_Leadership_Approval__r.LCP_Approver__c,Parent_QSRM_Leadership_Approval__r.Vertical_Leader_Approver__c,Parent_QSRM_Leadership_Approval__r.Digital_Leader_Approver__c, LCP_Approver__c,
+                                                                         LCP_Approver_Status__c, Vertical_Leader_Approver__c, Vertical_Leader_Approver_Status__c, Digital_Leader_Approver__c, Digital_Leader_Approver_Status__c, One_QSRM_Type__c, QSRM__c, QSRM__r.OppOwnerEmail__c FROM QSRM_Leadership_Approvals__c WHERE QSRM__c =: qsrmLeaderShipList[0].QSRM__c];
+                List<QSRM_Leadership_Approvals__c> qsrmLeaderShipRecordsToInsert = new List<QSRM_Leadership_Approvals__c>();
+                String currentUserId = parentApprover;
+                List<QSRM_Leadership_Approvals__c> deleteLeaderShipList = new List<QSRM_Leadership_Approvals__c>();
+                if(!qsrmLeaderShipList.isEmpty()){
+                    for(QSRM_Leadership_Approvals__c qsrmlp : qsrmLeaderShipList1){
+                        if(qsrmlp.Parent_QSRM_Leadership_Approval__r.LCP_Approver__c == currentUserId){
+                            deleteLeaderShipList.add(qsrmlp);
+                        }
+                        else if(qsrmlp.Parent_QSRM_Leadership_Approval__r.Vertical_Leader_Approver__c == currentUserId){
+                            deleteLeaderShipList.add(qsrmlp);
+                        }
+                        else if(qsrmlp.Parent_QSRM_Leadership_Approval__r.Digital_Leader_Approver__c == currentUserId){
+                            deleteLeaderShipList.add(qsrmlp);
+                        }
+                    }
+                }
+                if(!deleteLeaderShipList.isEmpty()){
+                    delete deleteLeaderShipList;
+                }
+                Set<Id> qsrmIdSet = new Set<Id>();
+                for(QSRM_Leadership_Approvals__c leadership : qsrmLeaderShipList) {
+                    qsrmIdSet.add(leadership.QSRM__c);
+                    QSRM_Leadership_Approvals__c leadershipObj = new QSRM_Leadership_Approvals__c();
+                    if(currentUserId == leadership.LCP_Approver__c) {
+                        leadershipObj = leadership.clone(false, false, false, false);
+                        leadershipObj.Parent_QSRM_Leadership_Approval__c = leadership.Id; 
+                        leadershipObj.LCP_Approver__c = userId;
+                    } else if(currentUserId == leadership.Vertical_Leader_Approver__c) {
+                        leadershipObj = leadership.clone(false, false, false, false);
+                        leadershipObj.Parent_QSRM_Leadership_Approval__c = leadership.Id; 
+                        leadershipObj.Vertical_Leader_Approver__c = userId;
+                    } else if(currentUserId == leadership.Digital_Leader_Approver__c) {
+                        leadershipObj = leadership.clone(false, false, false, false);
+                        leadershipObj.Parent_QSRM_Leadership_Approval__c = leadership.Id; 
+                        leadershipObj.Digital_Leader_Approver__c = userId;
+                    }
+                    qsrmLeaderShipRecordsToInsert.add(leadershipObj);
+                }
+                System.debug('qsrmLeaderShipRecordsToInsert>>>>> ' + qsrmLeaderShipRecordsToInsert);
+                QSRMLeadershipApprovalTrigger_Handler.isQSRMLeadershipTriggerRunning = true;
+                insert qsrmLeaderShipRecordsToInsert;
+                // QSRMLeadershipApprovalTrigger_Handler.isQSRMLeadershipTriggerRunning = false;
+                if(!qsrmLeaderShipRecordsToInsert.isEmpty()) {
+                    Set<Id> leadershipRecordsIdSet = (new Map<Id, QSRM_Leadership_Approvals__c>(qsrmLeaderShipRecordsToInsert)).keySet();
+                    if(!leadershipRecordsIdSet.isEmpty()) {
+                        HomePageApprovalController.qsrmSendForApproval(leadershipRecordsIdSet, processWorkItemList[0].ProcessInstance.ProcessDefinition.DeveloperName, userId, qsrmIdSet);
+                    }
+                }
+                return true;
+            }
+        } catch(Exception ex) {
+            System.debug('ERROR>>> ' + ex.getMessage() + ' at LINE NUMBER>>>>> ' + ex.getLineNumber());
+        }
+        return false;
+    }
+}
+
+
+
+/************************ ----------------------------------------------------------------------------------------------------------------------------- *****************************/
+/* Author: Ranjit Yadav
+TestClass: ACREmailServiceTest*/
+global class EmailServiceForACR implements Messaging.InboundEmailHandler {
+    global Static String targetObjectId = '';
+    
+    global Messaging.InboundEmailResult handleInboundEmail (Messaging.InboundEmail email, Messaging.InboundEnvelope envelope) {
+        
+        try{
+            Messaging.InboundEmailResult result = new Messaging.InboundEmailresult();
+            String completeEmailBody = email.plainTextBody;
+            String emailSubject = email.subject;
+            String emailFrom = email.fromAddress;
+            String ACRName = emailSubject.substringAfter('(').substringBefore(')');
+            String emailStatus = emailSubject.substringBefore('(');
+            List<User> usrList = [SELECT Id, Name from user WHERE email =: emailFrom AND IsActive = true ORDER BY Lastmodifieddate Desc LIMIT 1];
+            system.debug('---usrList---'+usrList);
+            if(usrList.isEmpty()){ return null; }
+            String userId = usrList[0].Id;
+            
+            List<Account_Creation_Request__c> acrList = [SELECT Id, Name FROM Account_Creation_Request__c WHERE 
+                                                         Name =:ACRName  LIMIT 1];
+            
+            
+            if(acrList.isEmpty() && !Test.isRunningTest()){ return null; }
+
+            List<ProcessInstanceWorkitem> pendingProcess = new List<ProcessInstanceWorkitem>([Select Id from ProcessInstanceWorkitem where ProcessInstance.TargetObject.Type = 'Account_Creation_Request__c' and ProcessInstance.TargetObjectId	=: acrList[0].Id and ActorId =:userId]);
+			
+            if(pendingProcess.isEmpty() && !Test.isRunningTest()){ return null; }
+
+            if(emailStatus == 'Approved'){
+                HomePageACRPendingForApproval.approvePendingItems(pendingProcess[0].Id, completeEmailBody, 'Approve');
+            }else if(emailStatus == 'Rejected'){
+                HomePageACRPendingForApproval.approvePendingItems(pendingProcess[0].Id, completeEmailBody, 'Reject');
+            }
+            return null;           
+        } catch (Exception ex) {
+            System.debug('Email Service==error line ='+ex.getLineNumber()+':====:'+ex.getMessage());
+            return null;
+        }
+    }
+}
